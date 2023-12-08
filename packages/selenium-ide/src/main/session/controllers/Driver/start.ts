@@ -3,7 +3,7 @@ import { ChildProcess, spawn } from 'child_process'
 import { app } from 'electron'
 import * as fs from 'fs-extra'
 import { BrowserInfo, Session } from 'main/types'
-import * as path from 'path'
+import * as path from 'node:path'
 import * as os from 'os'
 import { COLOR_MAGENTA, COLOR_YELLOW, vdebuglog } from 'main/util'
 
@@ -59,13 +59,14 @@ const getDriver = ({ browser, version }: BrowserInfo) =>
 export type StartDriver = (
   session: Session
 ) => (info: BrowserInfo) => Promise<DriverStartSuccess | DriverStartFailure>
+
 const startDriver: StartDriver = () => (info) =>
   new Promise((resolve) => {
     let initialized = false
     const args = ['--verbose', `--port=${port}`]
     const driverPath = getDriver(info)
     if (fs.existsSync(driverPath)) {
-      const driver = spawn(driverPath.replace(/\s/g, '\ '), args, {
+      const driver = spawn(driverPath.replace(/\s/g, ' '), args, {
         env: {},
         shell: false,
       })
@@ -77,6 +78,16 @@ const startDriver: StartDriver = () => (info) =>
           initialized = true
           WebdriverDebugLog('Driver has initialized!')
           resolve({ success: true, driver: driver })
+          process.on('beforeExit', async () => {
+            console.log('Exiting?');
+            try {
+              if (!driver.killed) {
+                await driver.kill(9)
+              }
+            } catch (e) {
+              console.warn('Failed ot kill driver', e)
+            }
+          })
         }
       })
       driver.stderr.on('data', (err: string) => {

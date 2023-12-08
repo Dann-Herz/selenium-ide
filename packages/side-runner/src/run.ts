@@ -26,8 +26,9 @@ import {
   WebDriverExecutor,
 } from '@seleniumhq/side-runtime'
 import { WebDriverExecutorConstructorArgs } from '@seleniumhq/side-runtime/dist/webdriver'
-import { SuiteShape, TestShape } from '@seleniumhq/side-model'
-import Satisfies from './versioner'
+import { TestShape } from '@seleniumhq/side-model'
+import fs from 'fs/promises'
+import path from 'path'
 import { Configuration, Project } from './types'
 
 export interface HoistedThings {
@@ -35,15 +36,17 @@ export interface HoistedThings {
   logger: Console
 }
 
-const buildRunners = ({ configuration, logger }: HoistedThings) => {
-  const runTest = async (project: Project, test: TestShape) => {
+const buildRun =
+  ({ configuration, logger }: HoistedThings) =>
+  async (project: Project, test: TestShape, variables = new Variables()) => {
     logger.info(`Running test ${test.name}`)
-    const pluginPaths = correctPluginPaths(project.path, project.plugins)
+    const pluginPaths = correctPluginPaths(project.path, project?.plugins ?? [])
     const plugins = await loadPlugins(pluginPaths)
     const customCommands = getCustomCommands(plugins)
     const driver = new WebDriverExecutor({
-      capabilities:
-        configuration.capabilities as unknown as WebDriverExecutorConstructorArgs['capabilities'],
+      capabilities: JSON.parse(
+        JSON.stringify(configuration.capabilities)
+      ) as unknown as WebDriverExecutorConstructorArgs['capabilities'],
       customCommands,
       hooks: {
         onBeforePlay: async () => {
@@ -70,13 +73,32 @@ const buildRunners = ({ configuration, logger }: HoistedThings) => {
           getTestByName: (name: string) =>
             project.tests.find((t) => t.name === name) as TestShape,
           logger,
-          variables: new Variables(),
+          variables,
         })
         const onComplete = async (failure: any) => {
+          // I know this feature is over aggressive for a tool to be deprecated
+          // but I can't figure out whats going wrong at {{paid work}} and I
+          // need this so just please don't ask me to expand on it because I
+          // don't want to own screenshotting in tool tbh. That is perfect for
+          // plugins.
+          if (failure && configuration.screenshotFailureDirectory) {
+            try {
+              const crashScreen = await driver.driver.takeScreenshot()
+              await fs.writeFile(
+                path.join(
+                  configuration.screenshotFailureDirectory,
+                  `${test.name}_${Date.now()}.png`
+                ),
+                crashScreen,
+                'base64'
+              )
+            } catch (e) {
+              console.log('Failed to take screenshot', e)
+            }
+          }
           await playback.cleanup()
           await driver.cleanup()
           if (failure) {
-            logger.warn('Completed with failure', failure)
             return reject(failure)
           } else {
             return resolve(null)
@@ -99,8 +121,19 @@ const buildRunners = ({ configuration, logger }: HoistedThings) => {
                     state === 'finished' ? 'Success' : 'Failure'
                   }`
                 )
-                onComplete(state !== 'finished')
+                if (state !== 'finished') {
+                  logger.info(
+                    'Last command:',
+                    playback['state'].lastSentCommandState?.command
+                  )
+                  return onComplete(
+                    playback['state'].lastSentCommandState?.error ||
+                      new Error('Unknown error')
+                  )
+                }
+                return onComplete(null)
             }
+            return
           }
         )
         EE.addListener(
@@ -125,7 +158,6 @@ const buildRunners = ({ configuration, logger }: HoistedThings) => {
             startingCommandIndex: 0,
           })
         } catch (e) {
-          console.error(e)
           await playback.cleanup()
           return reject(e)
         }
@@ -133,56 +165,4 @@ const buildRunners = ({ configuration, logger }: HoistedThings) => {
     }
   }
 
-  const runSuite = async (project: Project, suite: SuiteShape) => {
-    logger.info(`Running suite ${suite.name}`)
-    if (!suite.tests.length) {
-      throw new Error(
-        `The suite ${suite.name} has no tests, add tests to the suite using the IDE.`
-      )
-    }
-    for (let i = 0, ii = suite.tests.length; i != ii; i++) {
-      await runTest(
-        project,
-        project.tests.find((t) => t.id === suite.tests[i]) as TestShape
-      )
-    }
-    logger.info(`Finished suite ${suite.name}`)
-  }
-
-  const runProject = async (project: Project) => {
-    logger.info(`Running project ${project.name}`)
-    if (!configuration.force) {
-      let warning = Satisfies(project.version, '2.0')
-      if (warning) {
-        logger.warn(warning)
-      }
-    } else {
-      logger.warn("--force is set, ignoring project's version")
-    }
-    if (!project.suites.length) {
-      throw new Error(
-        `The project ${project.name} has no test suites defined, create a suite using the IDE.`
-      )
-    }
-
-    for (let i = 0, ii = project.suites.length; i != ii; i++) {
-      await runSuite(project, project.suites[i])
-    }
-    logger.info(`Finished project ${project.name}`)
-  }
-
-  const runAll = async (projects: Project[]) => {
-    for (let i = 0, ii = projects.length; i != ii; i++) {
-      await runProject(projects[i])
-    }
-  }
-
-  return {
-    all: runAll,
-    project: runProject,
-    suite: runSuite,
-    test: runTest,
-  }
-}
-
-export default buildRunners
+export default buildRun

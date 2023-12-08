@@ -14,52 +14,33 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+import { PluginPreloadOutputShape } from '@seleniumhq/side-api'
 import api from 'browser/api'
 import apiMutators from 'browser/api/mutator'
-import { contextBridge, ipcRenderer, webFrame } from 'electron'
-import { identity } from 'lodash/fp'
-import path from 'path'
+import preload from 'browser/helpers/preload'
+import { webFrame } from 'electron'
 import Recorder from './preload/recorder'
 
-const pluginFromPath = (pluginPath: string) => {
-  const actualPluginPath = __non_webpack_require__.resolve(pluginPath)
-  const preloadPath = path.join(actualPluginPath, '..', 'preload', 'index.js')
-  try {
-    const pluginPreload = __non_webpack_require__(preloadPath)
-    const pluginHandler =
-      typeof pluginPreload === 'function'
-        ? pluginPreload
-        : pluginPreload.default
-    return pluginHandler((...args: any[]) =>
-      ipcRenderer.send(`message-${pluginPath}`, ...args)
-    )
-  } catch (e) {
-    console.error(e)
-    return null
-  }
-}
+(async () => {
+  const plugins = await preload({
+    recorder: api.recorder,
+    mutators: { recorder: apiMutators.recorder },
+  })
+  window.addEventListener('DOMContentLoaded', async () => {
+    webFrame.executeJavaScript(`
+      Object.defineProperty(navigator, 'webdriver', {
+        get () {
+          return true
+        } 
+      })
+    `)
+    setTimeout(async () => {
+      console.debug('Initializing the recorder')
+      new Recorder(window, plugins.filter(Boolean) as PluginPreloadOutputShape[])
+    }, 500)
+  })
+})();
 
 /**
  * Expose it in the main context
  */
-window.addEventListener('DOMContentLoaded', async () => {
-  contextBridge.exposeInMainWorld('sideAPI', true)
-  webFrame.executeJavaScript(`
-    Object.defineProperty(navigator, 'webdriver', {
-      get () {
-        return true
-      } 
-    })
-  `)
-  window.sideAPI = {
-    recorder: api.recorder,
-    // @ts-expect-error
-    mutators: { recorder: apiMutators.recorder },
-  }
-  const pluginPaths = await api.plugins.list()
-  const plugins = pluginPaths.map(pluginFromPath).filter(identity)
-  setTimeout(async () => {
-    console.debug('Initializing the recorder')
-    new Recorder(window, plugins)
-  }, 500)
-})

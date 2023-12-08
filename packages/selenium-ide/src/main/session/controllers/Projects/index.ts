@@ -8,6 +8,8 @@ import { Session } from 'main/types'
 import { randomUUID } from 'crypto'
 import RecentProjects from './Recent'
 import BaseController from '../Base'
+import { isAutomated } from 'main/util'
+import { session } from 'electron'
 
 export default class ProjectsController {
   constructor(session: Session) {
@@ -42,6 +44,9 @@ export default class ProjectsController {
     if (this.loaded) return
     this.filepath = filepath
     this.project = project
+    await session.defaultSession.clearStorageData({
+      storages: ['cookies', 'localstorage'],
+    })
     await this.executeHook('onProjectLoaded')
     this.loaded = true
   }
@@ -117,18 +122,28 @@ export default class ProjectsController {
   }
 
   async load(filepath: string): Promise<CoreSessionData | null> {
-    const loadedProject = await this.load_v3(filepath)
-    if (loadedProject) {
-      if (this.loaded) {
-        const confirm = await this.onProjectUnloaded()
-        if (!confirm) {
-          return null
+    const fileExists = await fs
+      .stat(filepath)
+      .then(() => true)
+      .catch(() => false)
+    if (fileExists) {
+      const loadedProject = await this.load_v3(filepath)
+      if (loadedProject) {
+        if (this.loaded) {
+          const confirm = await this.onProjectUnloaded()
+          if (!confirm) {
+            return null
+          }
         }
+        await this.onProjectLoaded(loadedProject, filepath)
+        return await this.session.state.get()
       }
-      await this.onProjectLoaded(loadedProject, filepath)
-      return await this.session.state.get()
+      return null
+    } else {
+      this.doShowWarning()
+      this.recentProjects.remove(filepath)
+      return null
     }
-    return null
   }
 
   async save(filepath: string): Promise<boolean> {
@@ -137,19 +152,15 @@ export default class ProjectsController {
 
   async select(useArgs = false): Promise<void> {
     // When we're opened with a side file in the path
-    let argsFilepath = process.argv[1]
-    if (!this.session.app.isPackaged) {
-      const mainArgIndex = process.argv.findIndex((arg) =>
-        arg.endsWith('main-bundle.js')
-      )
-      if (mainArgIndex === -1) {
-        argsFilepath = ''
-      } else argsFilepath = process.argv[mainArgIndex + 1]
-    }
+    let argsFilepath = process.argv.find((arg) => arg.startsWith('--side-file=')) || ''
     if (this.filepath) {
       await this.load(this.filepath)
     } else if (useArgs && argsFilepath) {
-      await this.load(argsFilepath)
+      try {
+        await this.load(argsFilepath.replace('--side-file=', ''))
+      } catch (e) {
+        console.warn(`Unable to load file from args: ${argsFilepath}`)
+      }
     } else {
       await this.session.windows.open('splash')
     }
@@ -167,9 +178,9 @@ export default class ProjectsController {
     let project: ProjectShape
     try {
       project = JSON.parse(fileContents)
-      project.plugins = project.plugins.filter(
+      project.plugins = project?.plugins?.filter(
         (plugin) => typeof plugin === 'string'
-      )
+      ) ?? []
       return project
     } catch (e) {
       console.log((e as Error).message)
@@ -199,7 +210,7 @@ export default class ProjectsController {
   async doSaveChangesConfirm(): Promise<boolean> {
     if (await this.projectHasChanged()) {
       const confirmationStatus = await this.session.dialogs.showMessageBox(
-        'Save changes before leaving?',
+        'Save changes before closing project?',
         ['Cancel', 'Save and Continue', 'Continue without Saving']
       )
       switch (confirmationStatus) {
@@ -210,6 +221,16 @@ export default class ProjectsController {
             this.session.projects.filepath as string
           )
       }
+    }
+    return true
+  }
+
+  async doShowWarning(): Promise<boolean> {
+    if (!isAutomated && (await this.projectHasChanged())) {
+      await this.session.dialogs.showMessageBox(
+        "The project you're trying to load is not found , Please create a new project",
+        ['Ok']
+      )
     }
     return true
   }

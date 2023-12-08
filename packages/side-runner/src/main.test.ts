@@ -17,16 +17,16 @@
 
 import each from 'jest-each'
 import fs from 'fs'
-import glob from 'glob'
+import { globSync } from 'glob'
 import { createLogger, format, transports } from 'winston'
 import { Configuration, Project } from './types'
-import buildRegister from './register'
-import buildRunners from './run'
+import buildRun from './run'
 import { ProjectShape, SuiteShape, TestShape } from '@seleniumhq/side-model'
 import {
   correctPluginPaths,
   loadPlugins,
   PluginHooks,
+  Variables,
 } from '@seleniumhq/side-runtime'
 
 const metadata = require('../package.json')
@@ -71,7 +71,7 @@ const testTitle = 'Running test $name'
 
 const allMatchingProjects: Project[] = [
   ...configuration.projects.reduce((projects, project) => {
-    glob.sync(project).forEach((p) => {
+    globSync(project).forEach((p) => {
       projects.add(p)
     })
     return projects
@@ -119,15 +119,21 @@ const factoryParams = {
   configuration,
   logger: logger as unknown as Console,
 }
-const register = buildRegister(factoryParams)
-const runners = buildRunners(factoryParams)
+const getTestByID = (project: ProjectShape) => (testID: string) =>
+  project.tests.find((t) => t.id === testID) as TestShape
+
+const run = buildRun(factoryParams)
+
+let plugins: Awaited<ReturnType<typeof loadPlugins>> | undefined
 each(projects).describe(projectTitle, (project: Project) => {
   try {
-    const pluginPaths = correctPluginPaths(project.path, project.plugins)
+    const pluginPaths = correctPluginPaths(project.path, project?.plugins ?? [])
     const runHook = (hookName: keyof PluginHooks) => async () => {
-      const plugins = await loadPlugins(pluginPaths)
+      if (!plugins) {
+        plugins = await loadPlugins(pluginPaths)
+      }
       await Promise.all(
-        plugins.map(async (plugin) => {
+        plugins!.map(async (plugin) => {
           const hook = plugin.hooks?.[hookName]
           if (hook) {
             await hook({ ...factoryParams, project })
@@ -144,14 +150,19 @@ each(projects).describe(projectTitle, (project: Project) => {
     if (suites.length) {
       each(suites).describe(suiteTitle, (suite: SuiteShape) => {
         const isParallel = suite.parallel
-        const tests = suite.tests.map((tID) => register.test(project, tID))
+        const suiteVariables = new Variables()
+        const tests = suite.tests.map(getTestByID(project))
 
         const testExecutor = each(tests)
         const testMethod = isParallel
           ? testExecutor.test.concurrent
           : testExecutor.test
         testMethod(testTitle, async (test: TestShape) => {
-          await runners.test(project, test)
+          await run(
+            project,
+            test,
+            suite.persistSession ? suiteVariables : new Variables()
+          )
         })
       })
     } else {
@@ -159,9 +170,9 @@ each(projects).describe(projectTitle, (project: Project) => {
       Project ${project.name} doesn't have any suites matching filter ${configuration.filter},
       attempting to iterate all tests in project
     `)
-      const tests = project.tests
-        .map((test) => register.test(project, test.id))
-        .filter((test) => new RegExp(configuration.filter).test(test.name))
+      const tests = project.tests.filter((test) =>
+        new RegExp(configuration.filter).test(test.name)
+      )
       if (!tests.length) {
         throw new Error(
           `No suites or tests found in project ${project.name} matching filter ${configuration.filter}, unable to test!`
@@ -169,7 +180,7 @@ each(projects).describe(projectTitle, (project: Project) => {
       }
       const testExecutor = each(tests)
       testExecutor.test(testTitle, async (test: TestShape) => {
-        await runners.test(project, test)
+        await run(project, test, new Variables())
       })
     }
   } catch (e) {

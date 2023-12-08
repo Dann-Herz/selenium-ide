@@ -2,6 +2,7 @@ import List from '@mui/material/List'
 import FormControl from '@mui/material/FormControl'
 import MenuItem from '@mui/material/MenuItem'
 import Select from '@mui/material/Select'
+import Stack from '@mui/material/Stack'
 import { SuiteShape, TestShape } from '@seleniumhq/side-model'
 import React, { FC } from 'react'
 import Drawer from '../../components/Drawer/Wrapper'
@@ -60,26 +61,55 @@ const TestList: FC<TestListProps> = ({
         dense
         sx={{ borderColor: 'primary.main', paddingBottom: '48px' }}
         subheader={
-          <EditorToolbar
-            onAdd={async () => {
-              console.log('setIsOpen(true)')
-              setConfirmNew(true)
-            }}
-            onRemove={
-              tests.length > 1
-                ? () => {
-                    const doDelete = window.confirm('Delete this test?')
-                    if (doDelete) {
-                      window.sideAPI.tests.delete(activeTest)
+          <Stack>
+            <EditorToolbar
+              onAdd={async () => {
+                console.log('setIsOpen(true)')
+                setConfirmNew(true)
+              }}
+              onRemove={
+                tests.length > 1
+                  ? () => {
+                      const doDelete = window.confirm('Delete this test?')
+                      if (doDelete) {
+                        window.sideAPI.tests.delete(activeTest)
+                      }
                     }
-                  }
-                : undefined
-            }
-            sx={{
-              top: '47px',
-              zIndex: 100,
-            }}
-          />
+                  : undefined
+              }
+              sx={{
+                top: '47px',
+                zIndex: 100,
+              }}
+            />
+            <FormControl size="small">
+              <Select
+                MenuProps={{
+                  anchorOrigin: {
+                    horizontal: 'center',
+                    vertical: 'top',
+                  },
+                  transformOrigin: {
+                    horizontal: 'center',
+                    vertical: 'bottom',
+                  },
+                }}
+                className="flex-initial"
+                displayEmpty
+                onChange={(e) => setActiveSuite(e.target.value as string)}
+                placeholder="[All tests]"
+                sx={{ bottom: 0 }}
+                value={safeSuiteID}
+              >
+                <MenuItem value="">[All tests]</MenuItem>
+                {suites.map((s) => (
+                  <MenuItem key={s.id} value={s.id}>
+                    {s.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Stack>
         }
       >
         {testList
@@ -103,33 +133,6 @@ const TestList: FC<TestListProps> = ({
             )
           })}
       </List>
-      <FormControl size="small">
-        <Select
-          MenuProps={{
-            anchorOrigin: {
-              horizontal: 'center',
-              vertical: 'top',
-            },
-            transformOrigin: {
-              horizontal: 'center',
-              vertical: 'bottom',
-            },
-          }}
-          className="flex-initial"
-          displayEmpty
-          onChange={(e) => setActiveSuite(e.target.value as string)}
-          placeholder="[All tests]"
-          sx={{ bottom: 0 }}
-          value={safeSuiteID}
-        >
-          <MenuItem value="">[All tests]</MenuItem>
-          {suites.map((s) => (
-            <MenuItem key={s.id} value={s.id}>
-              {s.name}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
     </Drawer>
   )
 }

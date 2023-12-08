@@ -17,20 +17,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import { spawn } from 'child_process'
+import { Command } from 'commander'
+import crypto from 'crypto'
 import fs from 'fs'
 import merge from 'lodash/fp/merge'
 import os from 'os'
 import path from 'path'
-import crypto from 'crypto'
+import resolveBin from 'resolve-bin'
 import util from 'util'
-import { Command } from 'commander'
 import Capabilities from './capabilities'
 import Config from './config'
 import ParseProxy from './proxy'
 import { Configuration, SideRunnerAPI } from './types'
-import { spawn } from 'child_process'
-
-const isWindows = os.platform() === 'win32'
 
 const metadata = require('../package.json')
 
@@ -86,8 +85,12 @@ program
     'Use specified YAML file for configuration. (default: .side.yml)'
   )
   .option(
-    '-o, --output-directory [it directory]',
+    '-o, --output-directory [directory]',
     'Write test results as json to file in specified directory. Name will be based on timestamp.'
+  )
+  .option(
+    '-z, --screenshot-failure-directory [directory]',
+    'Write screenshots of failed tests to file in specified directory. Name will be based on test + timestamp.'
   )
   .option(
     '-f, --force',
@@ -104,6 +107,7 @@ if (!program.args.length) {
   process.exit(1)
 }
 const options = program.opts()
+
 let configuration: Configuration = {
   baseUrl: '',
   capabilities: {
@@ -114,6 +118,7 @@ let configuration: Configuration = {
   filter: options.filter || '.*',
   force: options.force,
   maxWorkers: os.cpus().length,
+  screenshotFailureDirectory: options.screenshotFailureDirectory,
   // Convert all project paths into absolute paths
   projects: [],
   proxyOptions: {},
@@ -176,18 +181,17 @@ if (options.outputDirectory) {
   }
 }
 
+if (options.screenshotFailureDirectory) {
+  if (!fs.existsSync(options.screenshotFailureDirectory)) {
+    fs.mkdirSync(options.screenshotFailureDirectory, { recursive: true })
+  }
+}
+
 configuration.debugStartup &&
   console.debug('Configuration:', util.inspect(configuration))
 
 // All the stuff that goes into a big wrapped jest command
-const jestExecutable = isWindows ? 'jest.cmd' : 'jest'
-const jestCommand = path.join(
-  __dirname,
-  '..',
-  'node_modules',
-  '.bin',
-  jestExecutable
-)
+const jest = 'node ' + resolveBin.sync('jest')
 const jestArgs = [
   '--config=' + path.join(__dirname, '..', 'jest.config.js'),
   '--maxConcurrency=' + configuration.maxWorkers,
@@ -209,8 +213,8 @@ const jestEnv = {
 }
 
 configuration.debugStartup &&
-  console.debug('Jest command:', jestCommand, jestArgs, jestEnv)
-spawn(jestCommand, jestArgs, {
+  console.debug('Jest command:', jest, jestArgs, jestEnv)
+spawn(jest, jestArgs, {
   env: jestEnv,
   shell: true,
   stdio: 'inherit',

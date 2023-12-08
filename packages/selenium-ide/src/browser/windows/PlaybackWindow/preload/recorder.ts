@@ -16,6 +16,7 @@
 // under the License.
 
 import { handlers, observers } from './record-handlers'
+import * as recordShortcuts from './record-shortcuts'
 import { attach, detach } from './prompt-injector'
 import {
   EventHandler,
@@ -23,7 +24,8 @@ import {
   ExpandedMutationObserver,
 } from 'browser/types'
 import initFindSelect from './find-select'
-import { PluginPreloadOutputShape } from '@seleniumhq/side-runtime'
+import { PluginPreloadOutputShape, RecordNewCommandInput } from '@seleniumhq/side-api'
+import LocatorBuilders from './locator-builders'
 
 export interface RecordingState {
   typeTarget: HTMLElement | null
@@ -72,6 +74,9 @@ export default class Recorder {
     this.recordingState = {}
     this.addRecorderTracingAttribute()
     initFindSelect()
+    this.window.sideAPI.recorder.onLocatorOrderChanged.addListener(
+      LocatorBuilders.setPreferredOrder
+    )
     // e.g., once on load
     this.getFrameLocation()
 
@@ -109,7 +114,7 @@ export default class Recorder {
     insertBeforeLastCommand: boolean = false,
     actualFrameLocation?: string
   ) {
-    let newCommand = {
+    let newCommand: RecordNewCommandInput = {
       command,
       target,
       value,
@@ -203,6 +208,7 @@ export default class Recorder {
       }
       attachInputListeners(this.recordingState, this.window)
       attach(this.record.bind(this))
+      recordShortcuts.attach(this)
     }
   }
 
@@ -227,6 +233,7 @@ export default class Recorder {
     this.attached = false
     detachInputListeners(this.recordingState, this.window)
     detach()
+    recordShortcuts.detach()
   }
 
   // set frame id

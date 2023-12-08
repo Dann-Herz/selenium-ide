@@ -5,11 +5,12 @@ import { configureLogging, connectSessionLogging } from './log'
 import store from './store'
 import createSession from './session'
 import installReactDevtools from './install-react-devtools'
+import { isAutomated } from './util'
 
 // Configure logging
 configureLogging();
 
-// Enable debugging - required for electron-chromedriv\
+// Enable debugging - required for electron-chromedriver
 app.commandLine.appendSwitch('remote-debugging-port', '8315')
 
 // Capture and show unhandled exceptions
@@ -34,7 +35,9 @@ app.on('open-file', async (_e, path) => {
 
 // Start and stop hooks
 app.on('ready', async () => {
-  !app.isPackaged && installReactDevtools()
+  if (!app.isPackaged && !isAutomated) {
+    installReactDevtools()
+  }
   await session.system.startup()
 
   process.on('SIGINT', async () => {
@@ -53,6 +56,14 @@ app.on('activate', async () => {
   if (allWindowsClosed) {
     allWindowsClosed = false
     await session.system.startup()
+  }
+})
+
+app.on('before-quit', async (e) => {
+  e.preventDefault()
+  const successfulExit = await session.system.beforeQuit()
+  if (successfulExit) {
+    app.exit(0)
   }
 })
 

@@ -1,7 +1,9 @@
-import { correctPluginPaths, loadPlugins, PluginShape } from '@seleniumhq/side-runtime'
+import { PluginShape } from '@seleniumhq/side-api'
+import { correctPluginPaths, loadPlugins } from '@seleniumhq/side-runtime'
 import { ipcMain } from 'electron'
 import storage from 'main/store'
 import BaseController from '../Base'
+import path from 'node:path'
 
 export type PluginMessageHandler = (
   event: Electron.IpcMainEvent,
@@ -19,6 +21,15 @@ export default class PluginsController extends BaseController {
     const activeProject = await this.session.projects.getActive()
     return systemPlugins
       .concat(correctPluginPaths(projectPath, activeProject.plugins))
+  }
+
+  async listPreloadPaths() {
+    const list = await this.list();
+    return list.map((pluginPath) => {
+      const actualPluginPath = __non_webpack_require__.resolve(pluginPath)
+      const preloadPath = path.join(actualPluginPath, '..', 'preload', 'index.js')
+      return preloadPath
+    })
   }
 
   async onProjectLoaded() {
@@ -49,6 +60,9 @@ export default class PluginsController extends BaseController {
       ipcMain.on(key, handler)
       this.pluginHooks[index][key] = handler
     })
+    if (plugin.hooks?.onLoad) {
+      await plugin.hooks.onLoad(this.session.api)
+    }
   }
 
   async unload(plugin: PluginShape) {
@@ -58,6 +72,9 @@ export default class PluginsController extends BaseController {
     Object.entries(hooks).forEach(([key, handler]) => {
       ipcMain.off(key, handler)
     })
+    if (plugin.hooks?.onUnload) {
+      await plugin.hooks.onUnload(this.session.api)
+    }
   }
   // This needs to build before commands
   priority = 3
